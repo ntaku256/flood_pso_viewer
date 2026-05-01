@@ -76,6 +76,14 @@ enum CurrentCam { Fly, Orbit }
 #[derive(Resource, Default, Clone, Copy)]
 struct WaterVisible(bool);
 
+/// ワールド中心（DEM bbox の中心、ボクセル座標）。F キーで Orbit に戻したときの focus に使う
+#[derive(Resource, Clone, Copy)]
+struct WorldCenter(Vec3);
+
+/// ワールドの最大サイズ（カメラ初期距離・速度の基準）
+#[derive(Resource, Clone, Copy)]
+struct WorldExtent(f32);
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -208,11 +216,17 @@ fn setup_scene(
 
     spawn_voxel_world(&mut commands, &mut meshes, &mut materials, &loaded.grid);
 
-    let half = Vec3::new(size[0] as f32 * 0.5, 0.0, size[2] as f32 * 0.5);
+    let world_center = Vec3::new(
+        size[0] as f32 * 0.5,
+        size[1] as f32 * 0.25,
+        size[2] as f32 * 0.5,
+    );
     let max_dim = size[0].max(size[2]) as f32;
     let cam_dist = max_dim * cli.fit_scale;
-    let cam_pos = Vec3::new(half.x + cam_dist, max_dim * 0.6, half.z + cam_dist);
-    let target  = Vec3::new(half.x, size[1] as f32 * 0.25, half.z);
+    let cam_pos = Vec3::new(world_center.x + cam_dist, max_dim * 0.6, world_center.z + cam_dist);
+    let target  = world_center;
+    commands.insert_resource(WorldCenter(world_center));
+    commands.insert_resource(WorldExtent(max_dim));
 
     // far クリップ平面を世界対角の数倍まで広げる（デフォルト 1000 だと巨大ワールドが消える）
     let world_diag = ((size[0].pow(2) + size[1].pow(2) + size[2].pow(2)) as f32).sqrt();
@@ -235,10 +249,10 @@ fn setup_scene(
             let dir = (target - cam_pos).normalize();
             let yaw   = dir.x.atan2(-dir.z);            // -Z 前方
             let pitch = dir.y.asin();
-            let speed = max_dim * 0.04;                  // ワールドサイズに比例
+            let speed = (max_dim * 0.08).clamp(40.0, 1000.0); // ワールドサイズに比例
             entity.insert(FlyCam {
                 yaw, pitch,
-                speed: speed.max(20.0),
+                speed,
                 ..default()
             });
         }
@@ -259,30 +273,33 @@ fn setup_scene(
 }
 
 /// F キーで Fly / Orbit を切り替える。Camera コンポーネントを動的に差し替え。
+/// Orbit に戻した際の焦点は **ワールド中心** に snap（前回はカメラ前方200uだったため大きな世界では外れがち）。
 fn toggle_camera_mode(
     keys: Res<ButtonInput<KeyCode>>,
     mut egui: EguiContexts,
     mut current: ResMut<CurrentCam>,
+    world_center: Res<WorldCenter>,
+    world_extent: Res<WorldExtent>,
     mut commands: Commands,
-    mut q_cam: Query<(Entity, &mut Transform), With<Camera3d>>,
-    q_orbit: Query<&PanOrbitCamera>,
-    q_fly: Query<&FlyCam>,
+    mut q_cam: Query<(Entity, &Transform), With<Camera3d>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if egui.ctx_mut().wants_keyboard_input() { return; }
     if !keys.just_pressed(KeyCode::KeyF) { return; }
 
-    for (ent, mut tf) in q_cam.iter_mut() {
+    let max_dim = world_extent.0;
+
+    for (ent, tf) in q_cam.iter_mut() {
         match *current {
             CurrentCam::Fly => {
-                // Fly → Orbit
+                // Fly → Orbit: 焦点をワールド中心に固定
                 let pos = tf.translation;
-                let forward = tf.forward();
-                let target = pos + *forward * 200.0;
+                let target = world_center.0;
+                let radius = (target - pos).length().max(max_dim * 0.5);
                 commands.entity(ent).remove::<FlyCam>();
                 commands.entity(ent).insert(PanOrbitCamera {
                     focus: target,
-                    radius: Some((target - pos).length()),
+                    radius: Some(radius),
                     ..default()
                 });
                 if let Ok(mut win) = windows.get_single_mut() {
@@ -290,21 +307,19 @@ fn toggle_camera_mode(
                     win.cursor_options.visible = true;
                 }
                 *current = CurrentCam::Orbit;
-                let _ = q_fly; // suppress unused warning
             }
             CurrentCam::Orbit => {
-                // Orbit → Fly
+                // Orbit → Fly: 現在の forward から yaw/pitch を再構成
                 let dir = tf.forward();
                 let yaw   = dir.x.atan2(-dir.z);
                 let pitch = dir.y.asin();
+                let speed = (max_dim * 0.08).clamp(40.0, 1000.0);
                 commands.entity(ent).remove::<PanOrbitCamera>();
                 commands.entity(ent).insert(FlyCam {
                     yaw, pitch,
-                    speed: 60.0,
+                    speed,
                     ..default()
                 });
-                let _ = tf.as_mut(); // ensure Transform is preserved
-                let _ = q_orbit;
                 *current = CurrentCam::Fly;
             }
         }

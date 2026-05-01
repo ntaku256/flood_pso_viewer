@@ -31,7 +31,7 @@ impl Default for FlyCam {
             yaw: 0.0,
             pitch: 0.0,
             speed: 60.0,
-            mouse_sensitivity: 0.0025,
+            mouse_sensitivity: 0.0012,
             captured: false,
         }
     }
@@ -93,7 +93,8 @@ fn mouse_look_system(
     }
 }
 
-/// WASD/Space/Shift で並進
+/// WASD/Space/Shift で並進。マウス capture 状態に関係なく常に有効
+/// （Minecraft Creative はマウスキャプチャ時のみ移動だが、egui 操作と両立しやすいよう常時許可）。
 fn keyboard_movement_system(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -103,8 +104,6 @@ fn keyboard_movement_system(
     if egui.ctx_mut().wants_keyboard_input() { return; }
 
     for (cam, mut tf) in q.iter_mut() {
-        if !cam.captured { continue; }
-
         // カメラ局所方向（yaw だけで水平投影、Creative の感覚に合わせる）
         let yaw_rot = Quat::from_axis_angle(Vec3::Y, cam.yaw);
         let forward = yaw_rot * Vec3::NEG_Z;
@@ -128,15 +127,16 @@ fn keyboard_movement_system(
     }
 }
 
-/// マウスホイールで速度調整（capture 中のみ）
+/// マウスホイールで速度調整（egui の上では egui のスクロールに使われるよう want_pointer をチェック）
 fn wheel_speed_system(
     mut wheel: EventReader<MouseWheel>,
     mut q: Query<&mut FlyCam>,
+    mut egui: EguiContexts,
 ) {
+    if egui.ctx_mut().wants_pointer_input() { wheel.clear(); return; }
     let dy: f32 = wheel.read().map(|e| e.y).sum();
     if dy.abs() < f32::EPSILON { return; }
     for mut cam in q.iter_mut() {
-        if !cam.captured { continue; }
         let factor = 1.15_f32.powf(dy);
         cam.speed = (cam.speed * factor).clamp(1.0, 4000.0);
     }

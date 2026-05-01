@@ -64,15 +64,28 @@ const FACES: [FaceAxis; 6] = [
     FaceAxis { normal: [ 0.0, 0.0,-1.0], axis: 2, dir: -1, u_axis: 0, v_axis: 1 }, // -Z
 ];
 
-/// VoxelGrid から、(material, MeshBuffer) のペア配列を返す。
+/// VoxelGrid から、(material, MeshBuffer) のペア配列を返す（ワールド全体）。
 pub fn build_meshes(grid: &VoxelGrid) -> Vec<(Material, MeshBuffer)> {
     let bbox = match grid.filled_bbox() {
         Some(b) => b,
         None    => return Material::all_visible().iter()
                             .map(|m| (*m, MeshBuffer::default())).collect(),
     };
+    build_meshes_in_bbox(grid, &bbox)
+}
 
-    // 各面方向 × 各 slice を並列処理 → 面方向ごとの slice 結果を集約
+/// VoxelGrid を「指定 bbox 内の voxel 範囲」に限定して greedy meshing する。
+/// 隣接セルの参照（ペア面の判定）は bbox の外も grid から取得するため、
+/// チャンク境界で偽の面が生成されることはない。
+pub fn build_meshes_in_bbox(
+    grid: &VoxelGrid,
+    bbox: &[Range<i32>; 3],
+) -> Vec<(Material, MeshBuffer)> {
+    if bbox.iter().any(|r| r.is_empty()) {
+        return Material::all_visible().iter()
+            .map(|m| (*m, MeshBuffer::default())).collect();
+    }
+
     let mut out: Vec<(Material, MeshBuffer)> = Material::all_visible()
         .iter().map(|m| (*m, MeshBuffer::default())).collect();
     let buf_index: HashMap<Material, usize> = out.iter()
@@ -81,7 +94,7 @@ pub fn build_meshes(grid: &VoxelGrid) -> Vec<(Material, MeshBuffer)> {
     for face in FACES.iter() {
         let slice_results: Vec<HashMap<Material, MeshBuffer>> = bbox[face.axis].clone()
             .into_par_iter()
-            .map(|slice| process_one_slice(grid, face, slice, &bbox))
+            .map(|slice| process_one_slice(grid, face, slice, bbox))
             .collect();
 
         for slice_map in slice_results {
@@ -92,6 +105,54 @@ pub fn build_meshes(grid: &VoxelGrid) -> Vec<(Material, MeshBuffer)> {
         }
     }
     out
+}
+
+pub struct ChunkMesh {
+    /// チャンク bbox の最小コーナー（ワールドボクセル座標）
+    pub origin: [i32; 3],
+    /// チャンク bbox の extent
+    pub size:   [i32; 3],
+    /// マテリアル別メッシュ
+    pub meshes: Vec<(Material, MeshBuffer)>,
+}
+
+/// XZ 方向に `chunk_xz` ブロック単位でチャンク分割し、各チャンクで個別にメッシュ化。
+/// 各チャンクが独立 Entity になるため、Bevy の frustum culling が
+/// 「画面外チャンクは描画スキップ」してくれる。
+pub fn build_meshes_chunked(grid: &VoxelGrid, chunk_xz: usize) -> Vec<ChunkMesh> {
+    let bbox = match grid.filled_bbox() {
+        Some(b) => b,
+        None    => return Vec::new(),
+    };
+    if bbox.iter().any(|r| r.is_empty()) || chunk_xz == 0 {
+        return Vec::new();
+    }
+    let cs = chunk_xz as i32;
+
+    // チャンクの (x_range, z_range) を列挙
+    let mut chunk_bboxes: Vec<[Range<i32>; 3]> = Vec::new();
+    for x0 in (bbox[0].start..bbox[0].end).step_by(chunk_xz) {
+        for z0 in (bbox[2].start..bbox[2].end).step_by(chunk_xz) {
+            let x1 = (x0 + cs).min(bbox[0].end);
+            let z1 = (z0 + cs).min(bbox[2].end);
+            chunk_bboxes.push([x0..x1, bbox[1].clone(), z0..z1]);
+        }
+    }
+
+    // 各チャンクを並列でメッシュ化
+    chunk_bboxes.into_par_iter()
+        .map(|cb| {
+            let origin = [cb[0].start, cb[1].start, cb[2].start];
+            let size = [
+                cb[0].end - cb[0].start,
+                cb[1].end - cb[1].start,
+                cb[2].end - cb[2].start,
+            ];
+            let meshes = build_meshes_in_bbox(grid, &cb);
+            ChunkMesh { origin, size, meshes }
+        })
+        .filter(|cm| cm.meshes.iter().any(|(_, b)| !b.positions.is_empty()))
+        .collect()
 }
 
 fn process_one_slice(
