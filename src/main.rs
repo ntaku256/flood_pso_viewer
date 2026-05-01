@@ -10,6 +10,7 @@ mod voxel;
 mod nbt_loader;
 mod greedy_mesh;
 mod render;
+mod material;
 mod ui;
 
 use std::path::PathBuf;
@@ -18,11 +19,14 @@ use std::time::Instant;
 use anyhow::Result;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
+use bevy::render::settings::{Backends, PowerPreference, RenderCreation, WgpuSettings};
+use bevy::render::RenderPlugin;
 use bevy_egui::EguiPlugin;
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 use clap::Parser;
 
 use crate::greedy_mesh::build_meshes;
+use crate::material::{VoxelMaterial, VoxelMaterialPlugin};
 use crate::render::spawn_voxel_world;
 use crate::ui::{meta_panel_system, LoadedMeta, ViewerStats};
 
@@ -75,17 +79,51 @@ fn main() -> Result<()> {
     };
     let meta = LoadedMeta(loaded.meta.clone());
 
+    // バックエンド選定：
+    //   - VoxelMaterial（自作 WGSL）で PBR バイパス済 → GL_EXT_texture_shadow_lod 問題は無い。
+    //   - WSL2 では Vulkan は lavapipe(CPU) しか居ないことが多いため、
+    //     GPU ハードに到達するルート Mesa Zink (GL→Vulkan→D3D12→GPU) を使う必要があり GL を最優先。
+    //   - ネイティブ Linux では Vulkan が直接 GPU を掴む。
+    //   - 環境変数 FLOOD_PSO_VIEWER_BACKEND で強制指定可能 (vulkan|dx12|gl|metal|all)。
+    let is_wsl = std::fs::read_to_string("/proc/version")
+        .map(|s| { let l = s.to_lowercase(); l.contains("microsoft") || l.contains("wsl") })
+        .unwrap_or(false);
+    let backends = match std::env::var("FLOOD_PSO_VIEWER_BACKEND").ok().as_deref() {
+        Some("vulkan")  => Backends::VULKAN,
+        Some("dx12")    => Backends::DX12,
+        Some("gl")      => Backends::GL,
+        Some("metal")   => Backends::METAL,
+        Some("all")     => Backends::all(),
+        None | Some(_)  => if is_wsl {
+            // WSL2: lavapipe(CPU) を避けるため Vulkan を後ろに
+            Backends::GL | Backends::DX12 | Backends::METAL | Backends::VULKAN
+        } else {
+            Backends::VULKAN | Backends::DX12 | Backends::METAL | Backends::GL
+        },
+    };
+    eprintln!("[backend] is_wsl={is_wsl}, backends mask = {:?}", backends);
+
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: format!("flood_pso_viewer — {}", cli.file.display()),
-                resolution: (1400.0, 900.0).into(),
+        .add_plugins(DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: format!("flood_pso_viewer — {}", cli.file.display()),
+                    resolution: (1400.0, 900.0).into(),
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        }))
+            })
+            .set(RenderPlugin {
+                render_creation: RenderCreation::Automatic(WgpuSettings {
+                    backends: Some(backends),
+                    power_preference: PowerPreference::HighPerformance,
+                    ..default()
+                }),
+                ..default()
+            }))
         .add_plugins(EguiPlugin)
         .add_plugins(PanOrbitCameraPlugin)
+        .add_plugins(VoxelMaterialPlugin)
         .insert_resource(stats)
         .insert_resource(meta)
         .insert_resource(cli.clone())
@@ -109,7 +147,7 @@ fn setup_scene(
     cli: Res<Cli>,
     mut grid_res: ResMut<LoadedGrid>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<VoxelMaterial>>,
 ) {
     let loaded = grid_res.0.take().expect("LoadedGrid was already taken");
     let size = loaded.grid.size;
