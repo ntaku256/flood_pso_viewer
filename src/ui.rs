@@ -4,6 +4,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use crate::fly_cam::FlyCam;
 use crate::nbt_loader::FloodPsoMeta;
 
 #[derive(Resource, Default)]
@@ -26,6 +27,7 @@ pub fn meta_panel_system(
     stats: Res<ViewerStats>,
     meta_res: Res<LoadedMeta>,
     diag: Res<DiagnosticsStore>,
+    fly_q: Query<&FlyCam>,
 ) {
     let meta = &meta_res.0;
     let fps = diag
@@ -35,19 +37,38 @@ pub fn meta_panel_system(
         .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
         .and_then(|d| d.smoothed());
 
+    // Fly カメラのステータス（存在しなければ Orbit モード）
+    let fly_state: Option<(bool, f32)> = fly_q.iter().next()
+        .map(|c| (c.captured, c.speed));
+
     egui::SidePanel::right("flood_pso_meta_panel")
         .resizable(true)
         .min_width(280.0)
         .default_width(330.0)
         .show(contexts.ctx_mut(), |ui| {
             ui.heading("flood_pso viewer");
-            // FPS / frame time を強調表示
             ui.horizontal(|ui| {
                 let fps_str = fps.map(|f| format!("{f:>5.1} FPS")).unwrap_or_else(|| "—".into());
                 let ms_str  = frame_ms.map(|m| format!("{m:>5.1} ms/frame")).unwrap_or_else(|| "—".into());
                 ui.colored_label(egui::Color32::LIGHT_GREEN, fps_str);
                 ui.label("·");
                 ui.colored_label(egui::Color32::LIGHT_BLUE, ms_str);
+            });
+            // カメラ状態表示
+            ui.horizontal(|ui| {
+                match fly_state {
+                    Some((true, speed)) => {
+                        ui.colored_label(egui::Color32::YELLOW, "● mouse: CAPTURED");
+                        ui.label(format!("speed {speed:.0}"));
+                    }
+                    Some((false, speed)) => {
+                        ui.colored_label(egui::Color32::LIGHT_GRAY, "○ mouse: free  (Tab to capture)");
+                        ui.label(format!("speed {speed:.0}"));
+                    }
+                    None => {
+                        ui.colored_label(egui::Color32::LIGHT_GRAY, "Orbit camera (F to switch to Fly)");
+                    }
+                }
             });
             ui.separator();
             ui.label(format!("file: {}", stats.file_path));

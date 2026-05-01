@@ -245,11 +245,13 @@ fn setup_scene(
     ));
     match *cur_cam {
         CurrentCam::Fly => {
-            // Fly mode: 初期視線方向に合わせて yaw/pitch をセット
+            // Fly mode: 初期視線方向に合わせて yaw/pitch をセット。
+            // forward = (-sin(yaw)*cos(pitch), sin(pitch), -cos(yaw)*cos(pitch))
+            //   なので yaw = atan2(-fx, -fz),  pitch = asin(fy)
             let dir = (target - cam_pos).normalize();
-            let yaw   = dir.x.atan2(-dir.z);            // -Z 前方
+            let yaw   = (-dir.x).atan2(-dir.z);
             let pitch = dir.y.asin();
-            let speed = (max_dim * 0.08).clamp(40.0, 1000.0); // ワールドサイズに比例
+            let speed = (max_dim * 0.08).clamp(40.0, 1000.0);
             entity.insert(FlyCam {
                 yaw, pitch,
                 speed,
@@ -311,7 +313,7 @@ fn toggle_camera_mode(
             CurrentCam::Orbit => {
                 // Orbit → Fly: 現在の forward から yaw/pitch を再構成
                 let dir = tf.forward();
-                let yaw   = dir.x.atan2(-dir.z);
+                let yaw   = (-dir.x).atan2(-dir.z);
                 let pitch = dir.y.asin();
                 let speed = (max_dim * 0.08).clamp(40.0, 1000.0);
                 commands.entity(ent).remove::<PanOrbitCamera>();

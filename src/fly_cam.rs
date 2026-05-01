@@ -93,8 +93,10 @@ fn mouse_look_system(
     }
 }
 
-/// WASD/Space/Shift で並進。マウス capture 状態に関係なく常に有効
-/// （Minecraft Creative はマウスキャプチャ時のみ移動だが、egui 操作と両立しやすいよう常時許可）。
+/// WASD/Space/Shift で並進。
+/// 前後左右は **カメラ局所方向（pitch を含む）** を使う。下を向いて W で前進すると下方向へ進む。
+/// Space/Shift だけは world up/down にして垂直エレベータとして使えるようにしておく。
+/// マウス capture 状態に関係なく常に有効。
 fn keyboard_movement_system(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -104,11 +106,12 @@ fn keyboard_movement_system(
     if egui.ctx_mut().wants_keyboard_input() { return; }
 
     for (cam, mut tf) in q.iter_mut() {
-        // カメラ局所方向（yaw だけで水平投影、Creative の感覚に合わせる）
-        let yaw_rot = Quat::from_axis_angle(Vec3::Y, cam.yaw);
-        let forward = yaw_rot * Vec3::NEG_Z;
-        let right   = yaw_rot * Vec3::X;
-        let up      = Vec3::Y;
+        // 現在のカメラ姿勢（yaw + pitch）から forward/right を取り出す
+        let rot = Quat::from_axis_angle(Vec3::Y, cam.yaw)
+                * Quat::from_axis_angle(Vec3::X, cam.pitch);
+        let forward = rot * Vec3::NEG_Z;       // 視線方向
+        let right   = rot * Vec3::X;           // カメラ右（pitch 込み）
+        let up      = Vec3::Y;                 // ワールド上下（垂直）
 
         let mut dir = Vec3::ZERO;
         if keys.pressed(KeyCode::KeyW)         { dir += forward; }
@@ -118,8 +121,8 @@ fn keyboard_movement_system(
         if keys.pressed(KeyCode::Space)        { dir += up;      }
         if keys.pressed(KeyCode::ShiftLeft)
             || keys.pressed(KeyCode::ShiftRight) { dir -= up;    }
+
         if dir.length_squared() > 0.0 {
-            // ダッシュ（Ctrl）で速度倍化
             let mult = if keys.pressed(KeyCode::ControlLeft)
                        || keys.pressed(KeyCode::ControlRight) { 4.0 } else { 1.0 };
             tf.translation += dir.normalize() * cam.speed * mult * time.delta_secs();
