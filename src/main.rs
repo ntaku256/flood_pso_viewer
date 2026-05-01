@@ -31,8 +31,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::Result;
+use bevy::core_pipeline::core_3d::Camera3d;
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
+use bevy::render::camera::PerspectiveProjection;
 use bevy::render::settings::{Backends, PowerPreference, RenderCreation, WgpuSettings};
+use bevy::render::view::Msaa;
 use bevy::render::RenderPlugin;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bevy_egui::{EguiContexts, EguiPlugin};
@@ -154,11 +159,20 @@ fn main() -> Result<()> {
                     ..default()
                 }),
                 ..default()
+            })
+            // Mesa Zink GL の wgpu-hal heuristic warning スパムを抑制。
+            // 元々は ERROR レベルだが致命でないので OFF にする。
+            // 必要なら RUST_LOG=wgpu_hal=info で再表示可能。
+            .set(LogPlugin {
+                filter: "wgpu_hal::gles=off,wgpu_core=warn,naga=warn,bevy_render=warn".into(),
+                level: bevy::log::Level::INFO,
+                ..default()
             }))
         .add_plugins(EguiPlugin)
         .add_plugins(PanOrbitCameraPlugin)
         .add_plugins(FlyCamPlugin)
         .add_plugins(VoxelMaterialPlugin)
+        .add_plugins(FrameTimeDiagnosticsPlugin)
         .insert_resource(stats)
         .insert_resource(meta)
         .insert_resource(cli.clone())
@@ -200,9 +214,20 @@ fn setup_scene(
     let cam_pos = Vec3::new(half.x + cam_dist, max_dim * 0.6, half.z + cam_dist);
     let target  = Vec3::new(half.x, size[1] as f32 * 0.25, half.z);
 
+    // far クリップ平面を世界対角の数倍まで広げる（デフォルト 1000 だと巨大ワールドが消える）
+    let world_diag = ((size[0].pow(2) + size[1].pow(2) + size[2].pow(2)) as f32).sqrt();
+    let far = (world_diag * 4.0).max(10000.0);
+
     let mut entity = commands.spawn((
         Camera3d::default(),
         Transform::from_translation(cam_pos).looking_at(target, Vec3::Y),
+        Projection::Perspective(PerspectiveProjection {
+            near: 0.1,
+            far,
+            fov: std::f32::consts::FRAC_PI_4,    // 45°
+            aspect_ratio: 16.0 / 9.0,
+        }),
+        Msaa::Off, // Mesa Zink でのフラグメントコスト削減
     ));
     match *cur_cam {
         CurrentCam::Fly => {
@@ -227,6 +252,8 @@ fn setup_scene(
             });
         }
     }
+
+    eprintln!("[camera] pos={cam_pos:?} target={target:?} far={far:.0}");
 
     let _ = loaded;
 }

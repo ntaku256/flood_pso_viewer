@@ -1,5 +1,6 @@
 //! egui で flood_pso_meta 情報パネルを表示
 
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
@@ -24,14 +25,30 @@ pub fn meta_panel_system(
     mut contexts: EguiContexts,
     stats: Res<ViewerStats>,
     meta_res: Res<LoadedMeta>,
+    diag: Res<DiagnosticsStore>,
 ) {
     let meta = &meta_res.0;
+    let fps = diag
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|d| d.smoothed());
+    let frame_ms = diag
+        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+        .and_then(|d| d.smoothed());
+
     egui::SidePanel::right("flood_pso_meta_panel")
         .resizable(true)
         .min_width(280.0)
         .default_width(330.0)
         .show(contexts.ctx_mut(), |ui| {
             ui.heading("flood_pso viewer");
+            // FPS / frame time を強調表示
+            ui.horizontal(|ui| {
+                let fps_str = fps.map(|f| format!("{f:>5.1} FPS")).unwrap_or_else(|| "—".into());
+                let ms_str  = frame_ms.map(|m| format!("{m:>5.1} ms/frame")).unwrap_or_else(|| "—".into());
+                ui.colored_label(egui::Color32::LIGHT_GREEN, fps_str);
+                ui.label("·");
+                ui.colored_label(egui::Color32::LIGHT_BLUE, ms_str);
+            });
             ui.separator();
             ui.label(format!("file: {}", stats.file_path));
             ui.label(format!("size XYZ: {} × {} × {}",
