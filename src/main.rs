@@ -223,8 +223,28 @@ fn setup_scene(
     );
     let max_dim = size[0].max(size[2]) as f32;
     let cam_dist = max_dim * cli.fit_scale;
-    let cam_pos = Vec3::new(world_center.x + cam_dist, max_dim * 0.6, world_center.z + cam_dist);
-    let target  = world_center;
+
+    // 起動カメラ位置：
+    //   Fly モードはマイクラのクリエイティブ開始直後の感覚に合わせ、
+    //     ワールドの天井から少し上 + 中心の少し南に置き、水平やや下向きに。
+    //   Orbit モードはワールド全体を見渡せる遠い角度を維持。
+    let world_top_y = size[1] as f32;
+    let (cam_pos, target) = match *cur_cam {
+        CurrentCam::Fly => {
+            let pos = Vec3::new(
+                world_center.x,
+                world_top_y + max_dim * 0.05,             // 天井のすこし上
+                world_center.z + max_dim * 0.10,          // 少しだけ南へオフセット
+            );
+            // 水平からわずかに下を向くターゲット
+            let look = Vec3::new(0.0, -0.3, -1.0).normalize();
+            (pos, pos + look * (max_dim * 0.5))
+        }
+        CurrentCam::Orbit => {
+            let pos = Vec3::new(world_center.x + cam_dist, max_dim * 0.6, world_center.z + cam_dist);
+            (pos, world_center)
+        }
+    };
     commands.insert_resource(WorldCenter(world_center));
     commands.insert_resource(WorldExtent(max_dim));
 
@@ -238,7 +258,7 @@ fn setup_scene(
         Projection::Perspective(PerspectiveProjection {
             near: 0.1,
             far,
-            fov: std::f32::consts::FRAC_PI_4,    // 45°
+            fov: 70_f32.to_radians(),    // Minecraft デフォルト相当
             aspect_ratio: 16.0 / 9.0,
         }),
         Msaa::Off, // Mesa Zink でのフラグメントコスト削減
