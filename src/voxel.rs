@@ -135,6 +135,38 @@ impl VoxelGrid {
         self.cells.iter().filter(|m| **m != Material::Air).count()
     }
 
+    /// 水・氷を Air に置き換え、bbox を再計算する（--no-water 用）
+    pub fn strip_water(&mut self) {
+        for c in self.cells.iter_mut() {
+            if matches!(*c, Material::Water | Material::Ice) {
+                *c = Material::Air;
+            }
+        }
+        // bbox 再計算
+        self.bbox_min = None;
+        self.bbox_max = None;
+        let [nx, ny, nz] = self.size;
+        for z in 0..nz {
+            for y in 0..ny {
+                for x in 0..nx {
+                    let idx = self.index(x, y, z);
+                    if self.cells[idx] != Material::Air {
+                        let p = [x as i32, y as i32, z as i32];
+                        match (&mut self.bbox_min, &mut self.bbox_max) {
+                            (Some(mn), Some(mx)) => {
+                                for k in 0..3 {
+                                    if p[k] < mn[k] { mn[k] = p[k]; }
+                                    if p[k] > mx[k] { mx[k] = p[k]; }
+                                }
+                            }
+                            _ => { self.bbox_min = Some(p); self.bbox_max = Some(p); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// 充填ボクセルが存在する範囲（[xmin..xmax+1) 等）を返す。
     /// 空の場合は None。set() 中に追跡しているので O(1)。
     pub fn filled_bbox(&self) -> Option<[std::ops::Range<i32>; 3]> {

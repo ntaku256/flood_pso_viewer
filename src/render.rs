@@ -9,10 +9,14 @@ use bevy::render::render_asset::RenderAssetUsages;
 
 use crate::greedy_mesh::{build_meshes, MeshBuffer};
 use crate::material::VoxelMaterial;
-use crate::voxel::VoxelGrid;
+use crate::voxel::{Material as VxMat, VoxelGrid};
 
 #[derive(Component)]
 pub struct VoxelWorldRoot;
+
+/// 水・氷 entity に付けるマーカー（V キーで Visibility をトグル）
+#[derive(Component)]
+pub struct WaterLayer;
 
 pub fn spawn_voxel_world(
     commands: &mut Commands,
@@ -46,11 +50,15 @@ pub fn spawn_voxel_world(
             double_sided: mat.is_translucent(),
         };
 
-        let child = commands.spawn((
+        let mut ent = commands.spawn((
             Mesh3d(meshes.add(bevy_mesh)),
             MeshMaterial3d(materials.add(v_mat)),
             Transform::default(),
-        )).id();
+        ));
+        if matches!(mat, VxMat::Water | VxMat::Ice) {
+            ent.insert(WaterLayer);
+        }
+        let child = ent.id();
         commands.entity(root).add_child(child);
     }
 
