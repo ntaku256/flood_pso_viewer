@@ -17,6 +17,7 @@
 //!   [共通]
 //!     F          : Fly / Orbit 切替
 //!     V          : 水・氷ブロック表示の ON/OFF（浸水前/後を比較）
+//!     H          : dh_map ヒートマップを 3D 地形に投影 ON/OFF
 //!     Esc        : 終了
 
 mod voxel;
@@ -26,6 +27,7 @@ mod render;
 mod material;
 mod fly_cam;
 mod ui;
+mod heatmap;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -47,6 +49,7 @@ use clap::{Parser, ValueEnum};
 use crate::fly_cam::{FlyCam, FlyCamPlugin};
 use crate::greedy_mesh::build_meshes;
 use crate::material::{VoxelMaterial, VoxelMaterialPlugin};
+use crate::heatmap::{spawn_heatmap_overlay, toggle_heatmap_visibility, HeatmapVisible};
 use crate::render::{spawn_voxel_world, WaterLayer};
 use crate::ui::{meta_panel_system, LoadedMeta, ViewerStats};
 
@@ -188,12 +191,14 @@ fn main() -> Result<()> {
         .insert_resource(ClearColor(Color::srgb(0.74, 0.86, 0.95)))
         .insert_resource(initial_cam)
         .insert_resource(WaterVisible(!cli.no_water))
+        .insert_resource(HeatmapVisible(true))
         .add_systems(Startup, setup_scene)
         .add_systems(Update, (
             meta_panel_system,
             exit_on_esc,
             toggle_camera_mode,
             toggle_water_visibility,
+            toggle_heatmap_visibility,
         ))
         .run();
 
@@ -210,11 +215,23 @@ fn setup_scene(
     mut grid_res: ResMut<LoadedGrid>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<VoxelMaterial>>,
+    meta: Res<LoadedMeta>,
+    heatmap_visible: Res<HeatmapVisible>,
 ) {
     let loaded = grid_res.0.take().expect("LoadedGrid was already taken");
     let size = loaded.grid.size;
 
     spawn_voxel_world(&mut commands, &mut meshes, &mut materials, &loaded.grid);
+
+    // dh_map ヒートマップを 3D 地形上空に投影（flood_pso_meta に dh_map があれば）
+    if let Some(n) = spawn_heatmap_overlay(
+        &mut commands, &mut meshes, &mut materials,
+        size, &meta.0, heatmap_visible.0,
+    ) {
+        eprintln!("[heatmap] spawned {n} cells");
+    } else {
+        eprintln!("[heatmap] dh_map not found in flood_pso_meta — skipped");
+    }
 
     let world_center = Vec3::new(
         size[0] as f32 * 0.5,
