@@ -68,6 +68,11 @@ pub struct FloodPsoMeta {
     pub timestamp_utc: Option<String>,
     pub dh_map:        Option<Vec<f32>>,
     pub dh_map_shape:  Option<Vec<i32>>,
+    /// Phase1 EX2: sigma_map K_s × K_s（flood_pso/docs/12 §10）。
+    /// scalar sigma の場所別化で、CCPSO2 の高次元優位を D=81 から確認した実験の結果。
+    pub sigma_map:        Option<Vec<f32>>,
+    pub sigma_map_shape:  Option<Vec<i32>>,
+    pub k_s:              Option<i32>,
     /// その他全フィールドを保持（UI 側で展開可能）
     pub raw:           BTreeMap<String, String>,
 }
@@ -152,8 +157,11 @@ fn decode_flood_pso_meta(v: &fastnbt::Value) -> FloodPsoMeta {
                 "study_area"    => out.study_area  = as_string(val),
                 "git_revision"  => out.git_revision = as_string(val),
                 "timestamp_utc" => out.timestamp_utc = as_string(val),
-                "dh_map"        => out.dh_map      = as_f32_list(val),
-                "dh_map_shape"  => out.dh_map_shape = as_i32_list(val),
+                "dh_map"           => out.dh_map      = as_f32_list(val),
+                "dh_map_shape"     => out.dh_map_shape = as_i32_list(val),
+                "sigma_map"        => out.sigma_map = as_f32_list(val),
+                "sigma_map_shape"  => out.sigma_map_shape = as_i32_list(val),
+                "K_s"              => out.k_s = as_i32(val),
                 _ => {}
             }
             // 簡易表示用の文字列形にして raw にも保存

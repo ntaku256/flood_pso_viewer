@@ -99,6 +99,7 @@ pub fn meta_panel_system(
                 row_f(ui, "sigma",     meta.sigma);
                 row_i(ui, "n_evals",   meta.n_evals);
                 row_f(ui, "elapsed_s", meta.elapsed_s);
+                row_i(ui, "K_s",       meta.k_s);
                 row(ui, "preset",      &meta.preset);
                 row(ui, "study_area",  &meta.study_area);
                 row(ui, "dem_source",  &meta.dem_source);
@@ -110,8 +111,29 @@ pub fn meta_panel_system(
             if let (Some(dh), Some(shape)) = (&meta.dh_map, &meta.dh_map_shape) {
                 if shape.len() == 2 {
                     ui.separator();
+                    let stats = grid_stats(dh);
                     ui.heading(format!("dh_map ({}×{})", shape[0], shape[1]));
-                    draw_dh_heatmap(ui, dh, shape);
+                    ui.label(format!(
+                        "min {:.2}  mean {:.2}  max {:.2}  |max| {:.2}",
+                        stats.min, stats.mean, stats.max, stats.max_abs,
+                    ));
+                    draw_grid_heatmap(ui, dh, shape, ColorMap::Diverging);
+                    ui.small("3D overlay: H key to toggle (blue↔red, top of world)");
+                }
+            }
+
+            // sigma_map のヒートマップ（Phase1 EX2 連動）
+            if let (Some(sm), Some(shape)) = (&meta.sigma_map, &meta.sigma_map_shape) {
+                if shape.len() == 2 {
+                    ui.separator();
+                    let stats = grid_stats(sm);
+                    ui.heading(format!("sigma_map ({}×{})", shape[0], shape[1]));
+                    ui.label(format!(
+                        "min {:.2}  mean {:.2}  max {:.2}",
+                        stats.min, stats.mean, stats.max,
+                    ));
+                    draw_grid_heatmap(ui, sm, shape, ColorMap::Viridis);
+                    ui.small("3D overlay: J key to toggle (viridis, above dh_map)");
                 }
             }
 
@@ -144,28 +166,54 @@ fn row_f(ui: &mut egui::Ui, label: &str, val: Option<f64>) {
     ui.end_row();
 }
 
-fn draw_dh_heatmap(ui: &mut egui::Ui, dh: &[f32], shape: &[i32]) {
-    let kx = shape[0].max(1) as usize;
-    let ky = shape[1].max(1) as usize;
-    if dh.len() != kx * ky { ui.label("(dh_map shape mismatch)"); return; }
-    let max_abs = dh.iter().fold(1e-6f32, |a, b| a.max(b.abs()));
+struct GridStats {
+    min: f32,
+    max: f32,
+    mean: f32,
+    max_abs: f32,
+}
+
+fn grid_stats(v: &[f32]) -> GridStats {
+    if v.is_empty() {
+        return GridStats { min: 0.0, max: 0.0, mean: 0.0, max_abs: 0.0 };
+    }
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    let mut sum = 0.0_f32;
+    let mut max_abs = 0.0_f32;
+    for &x in v {
+        if x < min { min = x; }
+        if x > max { max = x; }
+        sum += x;
+        let a = x.abs();
+        if a > max_abs { max_abs = a; }
+    }
+    GridStats { min, max, mean: sum / v.len() as f32, max_abs }
+}
+
+#[derive(Copy, Clone)]
+enum ColorMap { Diverging, Viridis }
+
+fn draw_grid_heatmap(ui: &mut egui::Ui, vals: &[f32], shape: &[i32], cmap: ColorMap) {
+    let kz = shape[0].max(1) as usize; // rows
+    let kx = shape[1].max(1) as usize; // cols
+    if vals.len() != kx * kz { ui.label("(shape mismatch)"); return; }
+    let max_abs = vals.iter().fold(1e-6f32, |a, b| a.max(b.abs()));
+    let max_val = vals.iter().cloned().fold(1e-6f32, f32::max);
     let cell = 14.0;
     let total_w = cell * kx as f32;
-    let total_h = cell * ky as f32;
+    let total_h = cell * kz as f32;
     let (resp, painter) = ui.allocate_painter(
         egui::vec2(total_w + 8.0, total_h + 8.0),
         egui::Sense::hover()
     );
     let origin = resp.rect.min + egui::vec2(4.0, 4.0);
-    for j in 0..ky {
+    for j in 0..kz {
         for i in 0..kx {
-            let v = dh[j * kx + i];
-            let t = (v / max_abs).clamp(-1.0, 1.0);
-            // 青(-) → 白 → 赤(+) のマップ
-            let (r, g, b) = if t >= 0.0 {
-                (255u8, ((1.0 - t) * 255.0) as u8, ((1.0 - t) * 255.0) as u8)
-            } else {
-                (((1.0 + t) * 255.0) as u8, ((1.0 + t) * 255.0) as u8, 255u8)
+            let v = vals[j * kx + i];
+            let (r, g, b) = match cmap {
+                ColorMap::Diverging => diverging_rgb(v, max_abs),
+                ColorMap::Viridis   => viridis_rgb(v, max_val),
             };
             let rect = egui::Rect::from_min_size(
                 origin + egui::vec2(i as f32 * cell, j as f32 * cell),
@@ -174,4 +222,42 @@ fn draw_dh_heatmap(ui: &mut egui::Ui, dh: &[f32], shape: &[i32]) {
             painter.rect_filled(rect, 1.0, egui::Color32::from_rgb(r, g, b));
         }
     }
+}
+
+fn diverging_rgb(v: f32, max_abs: f32) -> (u8, u8, u8) {
+    let t = (v / max_abs).clamp(-1.0, 1.0);
+    if t >= 0.0 {
+        (255, ((1.0 - t) * 255.0) as u8, ((1.0 - t) * 255.0) as u8)
+    } else {
+        (((1.0 + t) * 255.0) as u8, ((1.0 + t) * 255.0) as u8, 255)
+    }
+}
+
+fn viridis_rgb(v: f32, max_val: f32) -> (u8, u8, u8) {
+    let t = (v / max_val).clamp(0.0, 1.0);
+    // heatmap.rs::viridis_like_color と同じキー色を使う
+    let stops: [(f32, f32, f32, f32); 4] = [
+        (0.00, 0.27, 0.00, 0.33),
+        (0.33, 0.13, 0.45, 0.55),
+        (0.66, 0.20, 0.72, 0.36),
+        (1.00, 0.99, 0.91, 0.14),
+    ];
+    let (r, g, b) = {
+        let mut out = (0.99, 0.91, 0.14);
+        for w in stops.windows(2) {
+            let (t0, r0, g0, b0) = w[0];
+            let (t1, r1, g1, b1) = w[1];
+            if t <= t1 {
+                let f = if t1 > t0 { (t - t0) / (t1 - t0) } else { 0.0 };
+                out = (
+                    r0 + (r1 - r0) * f,
+                    g0 + (g1 - g0) * f,
+                    b0 + (b1 - b0) * f,
+                );
+                break;
+            }
+        }
+        out
+    };
+    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }

@@ -18,6 +18,7 @@
 //!     F          : Fly / Orbit 切替
 //!     V          : 水・氷ブロック表示の ON/OFF（浸水前/後を比較）
 //!     H          : dh_map ヒートマップを 3D 地形に投影 ON/OFF
+//!     J          : sigma_map ヒートマップを 3D 地形に投影 ON/OFF（Phase1 EX2 連動）
 //!     Esc        : 終了
 
 mod voxel;
@@ -49,7 +50,11 @@ use clap::{Parser, ValueEnum};
 use crate::fly_cam::{FlyCam, FlyCamPlugin};
 use crate::greedy_mesh::build_meshes;
 use crate::material::{VoxelMaterial, VoxelMaterialPlugin};
-use crate::heatmap::{spawn_heatmap_overlay, toggle_heatmap_visibility, HeatmapVisible};
+use crate::heatmap::{
+    spawn_heatmap_overlay, spawn_sigma_overlay,
+    toggle_heatmap_visibility, toggle_sigma_visibility,
+    HeatmapVisible, SigmaVisible,
+};
 use crate::render::{spawn_voxel_world, WaterLayer};
 use crate::ui::{meta_panel_system, LoadedMeta, ViewerStats};
 
@@ -192,6 +197,7 @@ fn main() -> Result<()> {
         .insert_resource(initial_cam)
         .insert_resource(WaterVisible(!cli.no_water))
         .insert_resource(HeatmapVisible(true))
+        .insert_resource(SigmaVisible(true))
         .add_systems(Startup, setup_scene)
         .add_systems(Update, (
             meta_panel_system,
@@ -199,6 +205,7 @@ fn main() -> Result<()> {
             toggle_camera_mode,
             toggle_water_visibility,
             toggle_heatmap_visibility,
+            toggle_sigma_visibility,
         ))
         .run();
 
@@ -217,6 +224,7 @@ fn setup_scene(
     mut materials: ResMut<Assets<VoxelMaterial>>,
     meta: Res<LoadedMeta>,
     heatmap_visible: Res<HeatmapVisible>,
+    sigma_visible: Res<SigmaVisible>,
 ) {
     let loaded = grid_res.0.take().expect("LoadedGrid was already taken");
     let size = loaded.grid.size;
@@ -231,6 +239,16 @@ fn setup_scene(
         eprintln!("[heatmap] spawned {n} cells");
     } else {
         eprintln!("[heatmap] dh_map not found in flood_pso_meta — skipped");
+    }
+
+    // sigma_map オーバーレイを dh_map のさらに上に配置（Phase1 EX2 出力にのみ存在）
+    if let Some(n) = spawn_sigma_overlay(
+        &mut commands, &mut meshes, &mut materials,
+        size, &meta.0, sigma_visible.0,
+    ) {
+        eprintln!("[sigma] spawned {n} cells");
+    } else {
+        eprintln!("[sigma] sigma_map not found in flood_pso_meta — skipped");
     }
 
     let world_center = Vec3::new(
