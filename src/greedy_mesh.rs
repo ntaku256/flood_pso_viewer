@@ -68,10 +68,16 @@ const FACES: [FaceAxis; 6] = [
 pub fn build_meshes(grid: &VoxelGrid) -> Vec<(Material, MeshBuffer)> {
     let bbox = match grid.filled_bbox() {
         Some(b) => b,
-        None    => return Material::all_visible().iter()
-                            .map(|m| (*m, MeshBuffer::default())).collect(),
+        None    => return empty_material_bufs(grid),
     };
     build_meshes_in_bbox(grid, &bbox)
+}
+
+/// palette の全 index ぶん空の MeshBuffer を用意する（material 別バッファの初期化）。
+fn empty_material_bufs(grid: &VoxelGrid) -> Vec<(Material, MeshBuffer)> {
+    (0..grid.palette.len() as u16)
+        .map(|i| (Material(i), MeshBuffer::default()))
+        .collect()
 }
 
 /// VoxelGrid を「指定 bbox 内の voxel 範囲」に限定して greedy meshing する。
@@ -82,12 +88,10 @@ pub fn build_meshes_in_bbox(
     bbox: &[Range<i32>; 3],
 ) -> Vec<(Material, MeshBuffer)> {
     if bbox.iter().any(|r| r.is_empty()) {
-        return Material::all_visible().iter()
-            .map(|m| (*m, MeshBuffer::default())).collect();
+        return empty_material_bufs(grid);
     }
 
-    let mut out: Vec<(Material, MeshBuffer)> = Material::all_visible()
-        .iter().map(|m| (*m, MeshBuffer::default())).collect();
+    let mut out: Vec<(Material, MeshBuffer)> = empty_material_bufs(grid);
     let buf_index: HashMap<Material, usize> = out.iter()
         .enumerate().map(|(i, (m, _))| (*m, i)).collect();
 
@@ -180,10 +184,10 @@ fn process_one_slice(
                 pos[2] + if face.axis == 2 { face.dir } else { 0 },
             ];
             let m_neigh = grid.get(neighbor_pos[0], neighbor_pos[1], neighbor_pos[2]);
-            let need_face = if m_self.is_translucent() {
+            let need_face = if grid.palette.is_translucent(m_self) {
                 !m_neigh.is_solid()
             } else {
-                !m_neigh.is_solid() || m_neigh.is_translucent()
+                !m_neigh.is_solid() || grid.palette.is_translucent(m_neigh)
             };
             if need_face {
                 mask[(v as usize) * n_u + (u as usize)] = Some(m_self);

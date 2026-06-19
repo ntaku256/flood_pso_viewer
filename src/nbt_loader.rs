@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use crate::voxel::{Material, VoxelGrid};
+use crate::voxel::{Material, Palette, VoxelGrid};
 
 #[derive(Debug, Deserialize)]
 struct PaletteEntry {
@@ -104,21 +104,20 @@ pub fn load_structure_nbt<P: AsRef<Path>>(path: P) -> Result<LoadedNbt> {
     let ny = size_xyz[1].max(0) as usize;
     let nz = size_xyz[2].max(0) as usize;
 
-    // palette index → Material
-    let palette_mat: Vec<Material> = root.palette.iter()
-        .map(|e| Material::from_minecraft_name(&e.name))
-        .collect();
+    // NBT palette 名から色テーブルを構築。Material は palette index をそのまま使う。
+    let names: Vec<String> = root.palette.iter().map(|e| e.name.clone()).collect();
+    let palette = Palette::from_names(&names);
+    let air_index = palette.air_index;
 
-    let mut grid = VoxelGrid::new([nx, ny, nz]);
+    let mut grid = VoxelGrid::new([nx, ny, nz], palette);
     let n_blocks = root.blocks.len();
     for b in &root.blocks {
         if b.pos.len() != 3 { continue; }
         let (x, y, z) = (b.pos[0], b.pos[1], b.pos[2]);
         if x < 0 || y < 0 || z < 0 { continue; }
         let s = b.state.max(0) as usize;
-        let mat = palette_mat.get(s).copied().unwrap_or(Material::Other);
-        if mat == Material::Air { continue; }
-        grid.set(x as usize, y as usize, z as usize, mat);
+        if s == air_index as usize { continue; }
+        grid.set(x as usize, y as usize, z as usize, Material(s as u16));
     }
 
     let meta = root.flood_pso_meta.as_ref()

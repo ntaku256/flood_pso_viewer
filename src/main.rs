@@ -21,6 +21,7 @@
 //!     J          : sigma_map ヒートマップを 3D 地形に投影 ON/OFF（Phase1 EX2 連動）
 //!     Esc        : 終了
 
+mod block_colors;
 mod voxel;
 mod nbt_loader;
 mod greedy_mesh;
